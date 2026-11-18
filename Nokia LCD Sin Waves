@@ -1,0 +1,119 @@
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
+
+// --- Pins ---
+#define LCD_RST D2
+#define LCD_CE  D1
+#define LCD_DC  D6
+#define LCD_DIN D7
+#define LCD_CLK D5
+#define MIC_PIN A0
+#define LED_PIN D0
+
+Adafruit_PCD8544 display = Adafruit_PCD8544(LCD_CLK, LCD_DIN, LCD_DC, LCD_CE, LCD_RST);
+
+// --- Screen ---
+#define SCREEN_W 84
+#define SCREEN_H 48
+#define MID_Y    (SCREEN_H / 2)
+
+// --- Sine lookup table (256 entries, -127..127 scaled) ---
+const int8_t sinTable[256] = {
+    0,   3,   6,   9,  12,  16,  19,  22,  25,  28,  31,  34,  37,  40,  43,  46,
+   49,  51,  54,  57,  60,  63,  65,  68,  71,  73,  76,  78,  81,  83,  85,  88,
+   90,  92,  94,  96,  98, 100, 102, 104, 106, 107, 109, 111, 112, 113, 115, 116,
+  117, 118, 119, 120, 121, 122, 123, 123, 124, 125, 125, 126, 126, 126, 126, 126,
+  127, 126, 126, 126, 126, 126, 125, 125, 124, 123, 123, 122, 121, 120, 119, 118,
+  117, 116, 115, 113, 112, 111, 109, 107, 106, 104, 102, 100,  98,  96,  94,  92,
+   90,  88,  85,  83,  81,  78,  76,  73,  71,  68,  65,  63,  60,  57,  54,  51,
+   49,  46,  43,  40,  37,  34,  31,  28,  25,  22,  19,  16,  12,   9,   6,   3,
+    0,  -3,  -6,  -9, -12, -16, -19, -22, -25, -28, -31, -34, -37, -40, -43, -46,
+  -49, -51, -54, -57, -60, -63, -65, -68, -71, -73, -76, -78, -81, -83, -85, -88,
+  -90, -92, -94, -96, -98,-100,-102,-104,-106,-107,-109,-111,-112,-113,-115,-116,
+ -117,-118,-119,-120,-121,-122,-123,-123,-124,-125,-125,-126,-126,-126,-126,-126,
+ -127,-126,-126,-126,-126,-126,-125,-125,-124,-123,-123,-122,-121,-120,-119,-118,
+ -117,-116,-115,-113,-112,-111,-109,-107,-106,-104,-102,-100, -98, -96, -94, -92,
+  -90, -88, -85, -83, -81, -78, -76, -73, -71, -68, -65, -63, -60, -57, -54, -51,
+  -49, -46, -43, -40, -37, -34, -31, -28, -25, -22, -19, -16, -12,  -9,  -6,  -3
+};
+
+// --- State ---
+uint8_t phase = 0;        // 0..255 — wraps naturally with uint8_t!
+int     level = 0;
+int     baseline = 0;
+int     ledHold = 0;
+
+// --- Tuning ---
+const int NOISE_FLOOR     = 30;
+const int MAP_MAX_RAW     = 200;
+const int LED_THRESHOLD   = 100;
+const int LED_HOLD_FRAMES = 5;
+const int AMP_MIN         = 3;    // minimum wave height (never flat)
+const int AMP_MAX         = 18;   // maximum wave height
+const uint8_t FREQ_MIN    = 12;   // wave density
+const uint8_t FREQ_MAX    = 40;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  display.begin();
+  display.setRotation(2);
+  display.setContrast(50);
+  display.clearDisplay();
+  display.display();
+
+  // Calibrate resting level
+  long sum = 0;
+  for (int i = 0; i < 100; i++) { sum += analogRead(MIC_PIN); delay(5); }
+  baseline = sum / 100;
+  Serial.print("Baseline: "); Serial.println(baseline);
+}
+
+void loop() {
+  // ---- Read + clean ----
+  int raw = analogRead(MIC_PIN) - baseline;
+  if (raw < 0) raw = 0;
+  if (raw < NOISE_FLOOR) raw = 0;
+
+  // Smooth
+  level = (level * 2 + raw) / 3;
+
+  // ---- Map to wave params ----
+  int amp   = map(level, 0, MAP_MAX_RAW, AMP_MIN, AMP_MAX);
+  uint8_t freq = map(level, 0, MAP_MAX_RAW, FREQ_MIN, FREQ_MAX);
+
+  // ---- LED ----
+  if (raw > LED_THRESHOLD) { digitalWrite(LED_PIN, HIGH); ledHold = LED_HOLD_FRAMES; }
+  else if (ledHold > 0) ledHold--;
+  else digitalWrite(LED_PIN, LOW);
+
+  // ---- Draw sine wave ----
+  display.clearDisplay();
+
+  int prevY = MID_Y;
+  for (int x = 0; x < SCREEN_W; x++) {
+    // index into table: phase shifts per x, plus scroll offset
+    uint8_t idx = phase + (uint8_t)((x * freq) >> 2);
+    int y = MID_Y + (int)((sinTable[idx] * amp) / 127);
+
+    if (y < 0) y = 0;
+    if (y >= SCREEN_H) y = SCREEN_H - 1;
+
+    if (x == 0) display.drawPixel(x, y, BLACK);
+    else        display.drawLine(x - 1, prevY, x, y, BLACK);
+
+    prevY = y;
+  }
+  Serial.print("raw="); Serial.print(raw);
+  Serial.print("  level="); Serial.print(level);
+  Serial.print("  amp="); Serial.println(amp);
+  
+  display.display();
+
+  // Scroll speed depends on volume
+  phase += 2 + (level / 60);   // uint8_t wraps automatically, no bug!
+  delay(30);
+}
