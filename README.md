@@ -1,4 +1,4 @@
-Pocket Sound Wave — ESP8266 + Nokia 5510 Audio Visualizer
+Sin Wave — ESP8266 + Nokia 5510 Audio Visualizer
 A compact real-time audio visualizer that turns ambient sound into a smooth, scrolling sine wave on a classic Nokia 5510 LCD (84×48 monochrome, PCD8544). An electret condenser microphone module (KE0034) captures sound on the ESP8266's analog pin, and the wave's amplitude, frequency, and scroll speed all react to volume — quiet rooms produce a gentle ripple, loud music produces a big fast-moving wave. A status LED pulses on beats.
 
 Features
